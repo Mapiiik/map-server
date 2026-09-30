@@ -1,0 +1,9 @@
+#!/bin/sh
+# Creates the data directories and hands them to the uid every service except Caddy runs as.
+set -eu
+
+for dir in sources tiles tmp mapproxy-cache config; do
+    mkdir -p "/data/$dir"
+done
+
+chown 1000:1000 /data/sources /data/tiles /data/tmp /data/mapproxy-cache

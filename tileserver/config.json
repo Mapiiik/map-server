@@ -1,0 +1,30 @@
+{
+  "options": {
+    "paths": {
+      "root": "/opt/map-server",
+      "fonts": "fonts",
+      "styles": "styles",
+      "icons": "icons",
+      "mbtiles": "/data/tiles"
+    },
+    "serveAllFonts": false,
+    "serveStaticMaps": true,
+    "allowRemoteMarkerIcons": false,
+    "allowInlineMarkerImages": false,
+    "maxScaleFactor": 2,
+    "maxSize": 2048,
+    "staticAttributionText": "© OpenMapTiles © OpenStreetMap contributors",
+    "minRendererPoolSizes": [8, 4, 2],
+    "maxRendererPoolSizes": [16, 8, 4]
+  },
+  "styles": {
+    "osm-bright": {
+      "style": "osm-bright/style.json"
+    }
+  },
+  "data": {
+    "v3": {
+      "mbtiles": "tiles.mbtiles"
+    }
+  }
+}

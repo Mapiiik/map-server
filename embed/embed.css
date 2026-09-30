@@ -1,0 +1,32 @@
+html, body, #map {
+    height: 100%;
+    margin: 0;
+}
+
+body {
+    background: #f2efe9;
+    font-family: system-ui, sans-serif;
+}
+
+.embed-pin {
+    background: none;
+    border: none;
+}
+
+.embed-link a {
+    display: block;
+    padding: 4px 8px;
+    color: #333;
+    background: rgba(255, 255, 255, 0.9);
+    font-size: 12px;
+    text-decoration: none;
+}
+
+.embed-link a:hover {
+    text-decoration: underline;
+}
+
+.embed-message {
+    padding: 16px;
+    color: #333;
+}

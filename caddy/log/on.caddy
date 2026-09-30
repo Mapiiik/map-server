@@ -1,0 +1,2 @@
+# Every request to stdout, client address included.
+log

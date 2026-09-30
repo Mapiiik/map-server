@@ -1,0 +1,16 @@
+#!/bin/sh
+# Builds the tiles straight away when there are none yet, then waits for the schedule.
+set -eu
+
+if [ "$#" -gt 0 ]; then
+    exec "$@"
+fi
+
+if [ ! -s /data/tiles/tiles.mbtiles ]; then
+    echo "No tiles yet, building them now."
+    update-tiles || echo "The first build failed, the schedule will try again."
+fi
+
+echo "${UPDATE_SCHEDULE:-0 3 * * *} update-tiles" > /tmp/crontab
+echo "Updating the tiles on schedule: ${UPDATE_SCHEDULE:-0 3 * * *}"
+exec supercronic -passthrough-logs /tmp/crontab

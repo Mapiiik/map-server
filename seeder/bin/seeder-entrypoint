@@ -1,0 +1,15 @@
+#!/bin/sh
+# Checks for new tiles every few minutes and trims the cache on its own schedule.
+set -eu
+
+if [ "$#" -gt 0 ]; then
+    exec "$@"
+fi
+
+cat > /tmp/crontab <<EOF
+${SEED_CHECK_SCHEDULE:-*/15 * * * *} seed-if-needed
+${TRIM_SCHEDULE:-30 4 * * 0} trim-cache
+EOF
+
+echo "Seeding checks: ${SEED_CHECK_SCHEDULE:-*/15 * * * *}, cache trimming: ${TRIM_SCHEDULE:-30 4 * * 0}"
+exec supercronic -passthrough-logs /tmp/crontab

@@ -1,0 +1,12 @@
+#!/bin/sh
+# Removes cached tiles nobody asked for in CACHE_MAX_AGE_DAYS. MapProxy has no size limit of its
+# own, and the imagery layers in particular grow with every area somebody looks at.
+set -eu
+
+days="${CACHE_MAX_AGE_DAYS:-90}"
+cache=/mapproxy/cache_data
+
+echo "Removing cached tiles older than $days days."
+find "$cache" -mindepth 2 -type f -name '*.*' -mtime +"$days" -delete
+find "$cache" -mindepth 2 -type d -empty -delete
+du -sh "$cache" 2>/dev/null || true

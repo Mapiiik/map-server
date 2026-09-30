@@ -1,0 +1,18 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "name": "A point: a square of SEED_DETAIL_RADIUS_KM around it" },
+      "geometry": { "type": "Point", "coordinates": [15.7399, 50.7359] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "A polygon: exactly this area" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[16.40, 43.49], [16.48, 43.49], [16.48, 43.53], [16.40, 43.53], [16.40, 43.49]]]
+      }
+    }
+  ]
+}

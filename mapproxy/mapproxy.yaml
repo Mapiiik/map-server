@@ -1,0 +1,109 @@
+# Caches the rendered map and the aerial imagery, and serves both as XYZ tiles:
+#
+#     /tiles/<layer>/webmercator/{z}/{x}/{y}.<png|jpeg>
+#
+# The two orthophoto layers are examples of national imagery published as open data, reprojected
+# here into the web mercator grid. Remove them, or add your own country's, as you need. Always keep
+# the attribution their licences ask for next to the map.
+
+services:
+  demo:
+  tms:
+    use_grid_names: true
+    origin: 'nw'
+
+layers:
+  - name: osm
+    title: OpenStreetMap (© OpenMapTiles © OpenStreetMap contributors)
+    sources: [osm_cache]
+  - name: cz-orthophoto
+    title: Orthophoto of the Czech Republic (© ČÚZK, CC BY 4.0)
+    sources: [cz_orthophoto_cache]
+  - name: hr-orthophoto
+    title: Orthophoto of Croatia (© DGU, Open Licence of the Republic of Croatia)
+    sources: [hr_orthophoto_cache]
+
+caches:
+  osm_cache:
+    grids: [webmercator]
+    sources: [osm_tiles]
+    format: image/png
+    cache:
+      type: file
+      directory: /mapproxy/cache_data/osm
+
+  cz_orthophoto_cache:
+    grids: [webmercator]
+    sources: [cz_orthophoto]
+    format: image/jpeg
+    request_format: image/jpeg
+    cache:
+      type: file
+      directory: /mapproxy/cache_data/cz-orthophoto
+
+  hr_orthophoto_cache:
+    grids: [webmercator]
+    sources: [hr_orthophoto]
+    format: image/jpeg
+    request_format: image/jpeg
+    cache:
+      type: file
+      directory: /mapproxy/cache_data/hr-orthophoto
+
+sources:
+  osm_tiles:
+    type: tile
+    url: http://tileserver:8080/styles/osm-bright/%(z)s/%(x)s/%(y)s.png
+    grid: webmercator
+    transparent: false
+
+  cz_orthophoto:
+    type: wms
+    req:
+      url: https://ags.cuzk.gov.cz/arcgis1/services/ORTOFOTO/MapServer/WMSServer
+      layers: '0'
+      transparent: false
+    wms_opts:
+      version: '1.3.0'
+    supported_srs: ['EPSG:3857']
+    supported_formats: ['image/jpeg']
+    coverage:
+      bbox: [11.88, 48.19, 19.17, 51.40]
+      srs: 'EPSG:4326'
+
+  # DGU flies half of the country each year, so the service spanning two years is the one that
+  # covers all of it. It offers no web mercator, hence the reprojection from the national grid.
+  hr_orthophoto:
+    type: wms
+    req:
+      url: https://geoportal.dgu.hr/services/inspire/orthophoto_2023_2024/wms
+      layers: OI.OrthoimageCoverage
+      transparent: false
+    wms_opts:
+      version: '1.3.0'
+    supported_srs: ['EPSG:3765']
+    supported_formats: ['image/jpeg']
+    coverage:
+      bbox: [13.41, 42.33, 19.20, 46.51]
+      srs: 'EPSG:4326'
+
+grids:
+  webmercator:
+    base: GLOBAL_WEBMERCATOR
+
+globals:
+  cache:
+    base_dir: /mapproxy/cache_data
+    lock_dir: /mapproxy/cache_data/locks
+    tile_lock_dir: /mapproxy/cache_data/tile_locks
+    # Fewer, larger requests to the imagery services. The tile source is asked tile by tile anyway.
+    meta_size: [4, 4]
+    meta_buffer: 0
+  image:
+    resampling_method: bicubic
+    formats:
+      image/jpeg:
+        encoding_options:
+          jpeg_quality: 85
+  http:
+    client_timeout: 60

@@ -1,0 +1,103 @@
+# A self-hosted map server: OpenStreetMap tiles for Leaflet and the like, cached aerial imagery,
+# static map images and an embeddable map page. Choose how it faces the internet with COMPOSE_FILE,
+# see .env.example.
+
+services:
+  # Creates the data directories and gives them to the uid the services write them as.
+  prepare:
+    build: ./builder
+    image: map-server-builder:local
+    user: root
+    command: ["prepare-data"]
+    volumes:
+      - ${DATA_DIR:-./data}:/data
+    restart: "no"
+
+  # Downloads the OpenStreetMap extracts and builds the vector tiles, now and then.
+  builder:
+    build: ./builder
+    image: map-server-builder:local
+    depends_on:
+      prepare:
+        condition: service_completed_successfully
+    environment:
+      REGIONS: ${REGIONS:?name the Geofabrik regions to build in .env}
+      UPDATE_SCHEDULE: ${UPDATE_SCHEDULE:-0 3 * * *}
+      UPDATE_MAX_AGE_DAYS: ${UPDATE_MAX_AGE_DAYS:-30}
+      PLANETILER_HEAP: ${PLANETILER_HEAP:-4g}
+      PLANETILER_ARGS: ${PLANETILER_ARGS:-}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - ${DATA_DIR:-./data}:/data
+    restart: unless-stopped
+
+  # Renders the vector tiles into raster tiles and static map images.
+  tileserver:
+    build: ./tileserver
+    image: map-server-tileserver:local
+    depends_on:
+      prepare:
+        condition: service_completed_successfully
+    volumes:
+      - ${DATA_DIR:-./data}/tiles:/data/tiles:ro
+    restart: unless-stopped
+
+  # Caches the rendered tiles and the aerial imagery.
+  mapproxy:
+    image: ghcr.io/mapproxy/mapproxy/mapproxy:7.0.0-nginx
+    depends_on:
+      prepare:
+        condition: service_completed_successfully
+    environment:
+      UWSGI_PROCESSES: ${MAPPROXY_PROCESSES:-4}
+      UWSGI_THREADS: ${MAPPROXY_THREADS:-8}
+    volumes:
+      - ./mapproxy/mapproxy.yaml:/mapproxy/config/mapproxy.yaml:ro
+      - ${DATA_DIR:-./data}/mapproxy-cache:/mapproxy/cache_data
+    restart: unless-stopped
+
+  # Renders the cache ahead after every tile update and trims it by age.
+  seeder:
+    build: ./seeder
+    image: map-server-seeder:local
+    depends_on:
+      prepare:
+        condition: service_completed_successfully
+    environment:
+      SEED_CHECK_SCHEDULE: ${SEED_CHECK_SCHEDULE:-*/15 * * * *}
+      SEED_MAX_ZOOM: ${SEED_MAX_ZOOM:-12}
+      SEED_DETAIL_MAX_ZOOM: ${SEED_DETAIL_MAX_ZOOM:-16}
+      SEED_DETAIL_RADIUS_KM: ${SEED_DETAIL_RADIUS_KM:-3}
+      SEED_CONCURRENCY: ${SEED_CONCURRENCY:-4}
+      TRIM_SCHEDULE: ${TRIM_SCHEDULE:-30 4 * * 0}
+      CACHE_MAX_AGE_DAYS: ${CACHE_MAX_AGE_DAYS:-90}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - ./mapproxy/mapproxy.yaml:/mapproxy/config/mapproxy.yaml:ro
+      - ${DATA_DIR:-./data}/mapproxy-cache:/mapproxy/cache_data
+      - ${DATA_DIR:-./data}/tiles:/data/tiles:ro
+      - ${DATA_DIR:-./data}/config:/data/config:ro
+    restart: unless-stopped
+
+  # TLS, certificates and the public paths.
+  caddy:
+    image: caddy:2.11-alpine
+    depends_on:
+      - mapproxy
+      - tileserver
+    environment:
+      SERVER_NAME: ${SERVER_NAME:?set SERVER_NAME in .env}
+      PROXY_ALLOW: ${PROXY_ALLOW:-10.0.0.0/8 172.16.0.0/12 192.168.0.0/16}
+      EMBED_FRAME_ANCESTORS: ${EMBED_FRAME_ANCESTORS:-*}
+      TILE_MAX_AGE: ${TILE_MAX_AGE:-86400}
+      ACCESS_LOG: ${ACCESS_LOG:-off}
+    volumes:
+      - ./caddy:/etc/caddy:ro
+      - ./embed:/srv/embed:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:

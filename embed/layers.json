@@ -1,0 +1,24 @@
+{
+  "base": {
+    "name": "Map",
+    "url": "../tiles/osm/webmercator/{z}/{x}/{y}.png",
+    "attribution": "&copy; <a href=\"https://openmaptiles.org/\" target=\"_blank\" rel=\"noopener\">OpenMapTiles</a> &copy; <a href=\"https://www.openstreetmap.org/copyright\" target=\"_blank\" rel=\"noopener\">OpenStreetMap contributors</a>",
+    "maxZoom": 19
+  },
+  "aerial": [
+    {
+      "name": "Aerial",
+      "url": "../tiles/cz-orthophoto/webmercator/{z}/{x}/{y}.jpeg",
+      "attribution": "&copy; <a href=\"https://cuzk.gov.cz/\" target=\"_blank\" rel=\"noopener\">ČÚZK</a>",
+      "bounds": [[48.19, 11.88], [51.40, 19.17]],
+      "maxZoom": 20
+    },
+    {
+      "name": "Aerial",
+      "url": "../tiles/hr-orthophoto/webmercator/{z}/{x}/{y}.jpeg",
+      "attribution": "&copy; <a href=\"https://dgu.gov.hr/\" target=\"_blank\" rel=\"noopener\">DGU</a>",
+      "bounds": [[42.33, 13.41], [46.51, 19.20]],
+      "maxZoom": 20
+    }
+  ]
+}

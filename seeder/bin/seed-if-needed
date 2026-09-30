@@ -1,0 +1,175 @@
+#!/usr/bin/env python3
+"""
+Renders the map cache ahead once the builder has made new tiles.
+
+The whole area the tiles cover is rendered up to SEED_MAX_ZOOM, and the places listed in
+/data/config/seed-coverage.geojson in more detail, up to SEED_DETAIL_MAX_ZOOM. Points in that file
+stand for a square SEED_DETAIL_RADIUS_KM around them, polygons are taken as they are.
+
+Tiles rendered from the previous data keep being served until their turn comes, and whatever was
+not rendered ahead is dropped afterwards, to be rendered afresh when somebody asks for it.
+"""
+import json
+import math
+import os
+import sqlite3
+import subprocess
+import sys
+import time
+import urllib.request
+
+TILES = '/data/tiles/tiles.mbtiles'
+COVERAGE = '/data/config/seed-coverage.geojson'
+MAPPROXY_CONFIG = '/mapproxy/config/mapproxy.yaml'
+MARKER = '/mapproxy/cache_data/.seeded'
+TILESERVER_HEALTH = os.environ.get('TILESERVER_HEALTH_URL', 'http://tileserver:8080/health')
+
+MAX_ZOOM = int(os.environ.get('SEED_MAX_ZOOM', '12'))
+DETAIL_MAX_ZOOM = int(os.environ.get('SEED_DETAIL_MAX_ZOOM', '16'))
+DETAIL_RADIUS_KM = float(os.environ.get('SEED_DETAIL_RADIUS_KM', '3'))
+CONCURRENCY = os.environ.get('SEED_CONCURRENCY', '4')
+SETTLE_SECONDS = 300
+
+
+def log(message):
+    print(f'[seed] {message}', flush=True)
+
+
+def wait_for_tileserver(timeout=900):
+    """The tileserver reloads the new tiles on its own, and may not have done so yet."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(TILESERVER_HEALTH, timeout=5) as response:
+                if response.status == 200:
+                    return
+        except OSError:
+            pass
+        time.sleep(10)
+    raise SystemExit('The tileserver did not come up, trying again next time.')
+
+
+def tile_bounds():
+    """The area the tiles were built for, as the builder wrote it into the file."""
+    with sqlite3.connect(f'file:{TILES}?mode=ro', uri=True) as db:
+        row = db.execute("SELECT value FROM metadata WHERE name = 'bounds'").fetchone()
+    if row is None:
+        raise SystemExit('The tiles carry no bounds.')
+    return [float(value) for value in row[0].split(',')]
+
+
+def square_around(lng, lat):
+    dlat = DETAIL_RADIUS_KM / 111.32
+    dlng = DETAIL_RADIUS_KM / (111.32 * math.cos(math.radians(lat)))
+    return {
+        'type': 'Polygon',
+        'coordinates': [[
+            [lng - dlng, lat - dlat], [lng + dlng, lat - dlat],
+            [lng + dlng, lat + dlat], [lng - dlng, lat + dlat],
+            [lng - dlng, lat - dlat],
+        ]],
+    }
+
+
+def detail_areas():
+    """The polygons to render in detail, or None when nobody listed any."""
+    if not os.path.isfile(COVERAGE):
+        return None
+
+    with open(COVERAGE, encoding='utf-8') as f:
+        features = json.load(f).get('features', [])
+
+    polygons = []
+    for feature in features:
+        geometry = feature.get('geometry') or {}
+        kind, coordinates = geometry.get('type'), geometry.get('coordinates')
+        if kind == 'Point':
+            polygons.append(square_around(*coordinates[:2]))
+        elif kind == 'MultiPoint':
+            polygons.extend(square_around(*point[:2]) for point in coordinates)
+        elif kind in ('Polygon', 'MultiPolygon'):
+            polygons.append(geometry)
+
+    if not polygons:
+        return None
+
+    path = '/tmp/seed-detail.geojson'
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump({
+            'type': 'FeatureCollection',
+            'features': [{'type': 'Feature', 'properties': {}, 'geometry': p} for p in polygons],
+        }, f)
+    log(f'Rendering {len(polygons)} areas in detail.')
+    return path
+
+
+def seed_config():
+    """MapProxy's seeding configuration, which the parts above depend on and so is written here."""
+    config = {
+        'coverages': {
+            'region': {'bbox': tile_bounds(), 'srs': 'EPSG:4326'},
+        },
+        'seeds': {
+            'region': {
+                'caches': ['osm_cache'],
+                'coverages': ['region'],
+                'levels': {'to': MAX_ZOOM},
+                'refresh_before': {'mtime': TILES},
+            },
+        },
+        'cleanups': {
+            'stale': {
+                'caches': ['osm_cache'],
+                'remove_before': {'mtime': TILES},
+            },
+        },
+    }
+
+    detail = detail_areas()
+    if detail is not None and DETAIL_MAX_ZOOM > MAX_ZOOM:
+        config['coverages']['detail'] = {'datasource': detail, 'srs': 'EPSG:4326'}
+        config['seeds']['detail'] = {
+            'caches': ['osm_cache'],
+            'coverages': ['detail'],
+            'levels': {'from': MAX_ZOOM + 1, 'to': DETAIL_MAX_ZOOM},
+            'refresh_before': {'mtime': TILES},
+        }
+
+    # JSON is valid YAML, which spares a dependency.
+    path = '/tmp/seed.yaml'
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(config, f, indent=2)
+    return path
+
+
+def mapproxy_seed(config, *what):
+    subprocess.run(
+        ['mapproxy-seed', '-f', MAPPROXY_CONFIG, '-s', config, '-c', CONCURRENCY, *what],
+        check=True,
+    )
+
+
+def main():
+    if not os.path.isfile(TILES):
+        return
+    if os.path.isfile(MARKER) and os.path.getmtime(MARKER) >= os.path.getmtime(TILES):
+        return
+    # The tileserver notices new tiles within a minute. Rendering before that would store the old
+    # map as if it were the new one.
+    if time.time() - os.path.getmtime(TILES) < SETTLE_SECONDS:
+        return
+
+    log('The tiles are new, rendering the cache ahead.')
+    started = time.time()
+    wait_for_tileserver()
+    config = seed_config()
+    mapproxy_seed(config, '--seed', 'ALL')
+    mapproxy_seed(config, '--cleanup', 'ALL')
+
+    with open(MARKER, 'w', encoding='utf-8') as f:
+        f.write(time.strftime('%Y-%m-%dT%H:%M:%S%z\n'))
+    log(f'Done in {round((time.time() - started) / 60)} minutes.')
+
+
+if __name__ == '__main__':
+    sys.exit(main())

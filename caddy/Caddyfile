@@ -1,0 +1,38 @@
+# The only way in: the cached tiles, the static map images and the embeddable map page.
+#
+# LISTENER_MODE picks how Caddy faces the world, see modes/. ACCESS_LOG=on logs every request.
+{
+	import modes/{$LISTENER_MODE:direct}/global.caddy
+}
+
+{$SERVER_NAME:localhost} {
+	import log/{$ACCESS_LOG:off}.caddy
+
+	# /tiles/<layer>/webmercator/{z}/{x}/{y}.<png|jpeg>
+	handle /tiles/* {
+		rewrite * /mapproxy{uri}
+		reverse_proxy mapproxy:80 {
+			header_down Cache-Control "public, max-age={$TILE_MAX_AGE:86400}"
+		}
+	}
+
+	# /static/{lng},{lat},{zoom}/{width}x{height}[@2x].png?marker={lng},{lat}|pin.png
+	handle_path /static/* {
+		rewrite * /styles/osm-bright/static{uri}
+		reverse_proxy tileserver:8080 {
+			header_down Cache-Control "public, max-age={$TILE_MAX_AGE:86400}"
+		}
+	}
+
+	redir /embed /embed/ 308
+	handle_path /embed/* {
+		root * /srv/embed
+		header Content-Security-Policy "frame-ancestors {$EMBED_FRAME_ANCESTORS:*}"
+		encode zstd gzip
+		file_server
+	}
+
+	handle {
+		respond "Not found" 404
+	}
+}

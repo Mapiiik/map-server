@@ -1,0 +1,144 @@
+#!/bin/bash
+# Downloads the OpenStreetMap extracts named in REGIONS and turns them into tiles.mbtiles.
+#
+# Meant to be run often: it does nothing until the tiles are UPDATE_MAX_AGE_DAYS old or the list of
+# regions changed, so a failed run is simply tried again next time. --force rebuilds regardless.
+# The previous tiles keep being served until the new ones are complete.
+set -euo pipefail
+
+log() { echo "[update-tiles] $*"; }
+
+force=0
+if [ "${1:-}" = "--force" ]; then
+    force=1
+fi
+
+mkdir -p /data/tmp
+exec 9>/data/tmp/update-tiles.lock
+if ! flock -n 9; then
+    log "Another update is already running."
+    exit 0
+fi
+
+read -r -a regions <<< "${REGIONS:?REGIONS is not set}"
+mirror="${GEOFABRIK_URL:-https://download.geofabrik.de}"
+extracts=/data/sources/extracts
+tiles=/data/tiles/tiles.mbtiles
+stamp=/data/tiles/regions.txt
+max_age_days="${UPDATE_MAX_AGE_DAYS:-30}"
+mkdir -p "$extracts"
+
+if [ "$force" -eq 0 ] && [ -s "$tiles" ] && [ "$(cat "$stamp" 2>/dev/null)" = "${regions[*]}" ] \
+    && [ -z "$(find "$tiles" -mmin +$((max_age_days * 1440)))" ]; then
+    log "The tiles are younger than $max_age_days days, nothing to do."
+    exit 0
+fi
+
+# The URL of a region's newest dated extract, e.g. europe/croatia-260929.osm.pbf. The -latest
+# alias redirects to it, but has been seen redirecting in circles, and conditional requests
+# to it end in a 404; the newest file listed on the region's page stands in for it then.
+resolve() {
+    local region="$1" dated
+    dated=$(curl -fsL --max-redirs 5 -r 0-0 -o /dev/null -w '%{url_effective}' \
+        "$mirror/$region-latest.osm.pbf" 2>/dev/null || true)
+
+    if [[ ! "$dated" =~ -[0-9]{6}\.osm\.pbf$ ]]; then
+        dated=$(curl -fsSL "$mirror/$region.html" | grep -o "${region##*/}-[0-9]\{6\}\.osm\.pbf" | sort -u | tail -n 1)
+        if [ -z "$dated" ]; then
+            log "Found no extract for $region." >&2
+            return 1
+        fi
+        log "The -latest link for $region does not answer, using $dated." >&2
+        dated="$mirror/${region%/*}/$dated"
+    fi
+
+    echo "${dated/#http:/https:}"
+}
+
+# Downloads an extract unless it is the one downloaded last time, checking the published md5.
+download() {
+    local url="$1" file="$2" attempt
+    if [ -s "$file" ] && [ "$(cat "$file.url" 2>/dev/null)" = "$url" ]; then
+        return 0
+    fi
+
+    for attempt in 1 2 3; do
+        rm -f "$file.part"
+
+        if curl -fsSL --retry 3 -o "$file.part" "$url" \
+            && [ "$(curl -fsSL --retry 3 "$url.md5" | cut -d' ' -f1)" = "$(md5sum "$file.part" | cut -d' ' -f1)" ]; then
+            mv -f "$file.part" "$file"
+            echo "$url" > "$file.url"
+            log "Downloaded $url"
+            return 0
+        fi
+
+        log "Download or checksum failed on attempt $attempt."
+        sleep 60
+    done
+
+    rm -f "$file.part"
+    log "Could not download $url"
+    return 1
+}
+
+files=()
+rebuild=$force
+for region in "${regions[@]}"; do
+    file="$extracts/${region//\//_}.osm.pbf"
+    url=$(resolve "$region")
+    download "$url" "$file"
+    files+=("$file")
+
+    if [ ! -s "$tiles" ] || [ "$file" -nt "$tiles" ]; then
+        rebuild=1
+    fi
+done
+
+if [ "$(cat "$stamp" 2>/dev/null)" != "${regions[*]}" ]; then
+    rebuild=1
+fi
+
+if [ "$rebuild" -eq 0 ]; then
+    log "No extract changed, the tiles stay as they are."
+    exit 0
+fi
+
+# Planetiler reads one file, so several extracts are merged first. Where they overlap, osmium
+# keeps each object once.
+input="${files[0]}"
+if [ "${#files[@]}" -gt 1 ]; then
+    input=/data/sources/merged.osm.pbf
+    log "Merging ${#files[@]} extracts."
+    osmium merge --overwrite --output="$input" "${files[@]}"
+fi
+
+log "Building the tiles."
+started=$(date +%s)
+rm -f /data/tiles/tiles.new.mbtiles
+# shellcheck disable=SC2086 # PLANETILER_ARGS is a list of arguments on purpose
+java "-Xmx${PLANETILER_HEAP:-4g}" -jar /opt/planetiler.jar \
+    --osm_path="$input" \
+    --output=/data/tiles/tiles.new.mbtiles \
+    --download \
+    --download_dir=/data/sources \
+    --tmpdir=/data/tmp/planetiler \
+    --force \
+    ${PLANETILER_ARGS:-}
+
+# A build much smaller than the one it replaces is more likely broken than right.
+new_size=$(stat -c %s /data/tiles/tiles.new.mbtiles)
+old_size=$(stat -c %s "$tiles" 2>/dev/null || echo 0)
+if [ "$new_size" -lt 1048576 ] || [ "$new_size" -lt $((old_size / 2)) ]; then
+    log "The new tiles are suspiciously small ($new_size bytes against $old_size), keeping the old ones."
+    exit 1
+fi
+
+if [ -e "$tiles" ]; then
+    ln -f "$tiles" /data/tiles/tiles.old.mbtiles
+fi
+mv -f /data/tiles/tiles.new.mbtiles "$tiles"
+echo "${regions[*]}" > "$stamp"
+rm -rf /data/tmp/planetiler
+
+log "Done in $(( ($(date +%s) - started) / 60 )) minutes, $((new_size / 1048576)) MB."
