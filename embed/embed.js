@@ -42,6 +42,7 @@
         return L.tileLayer(described.url, {
             attribution: described.attribution,
             maxZoom: described.maxZoom || 19,
+            maxNativeZoom: described.maxNativeZoom,
             bounds: described.bounds
         });
     }
