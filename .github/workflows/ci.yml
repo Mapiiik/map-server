@@ -1,0 +1,125 @@
+name: CI
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * *'
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  ##########################################################################
+  # One job per image. Scheduled runs build only when a base image changed,
+  # pushes and manual runs always build.
+  ##########################################################################
+  image:
+    name: Build ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: builder
+            context: builder
+            file: builder/Dockerfile
+          - name: tileserver
+            context: tileserver
+            file: tileserver/Dockerfile
+          - name: mapproxy
+            context: mapproxy
+            file: mapproxy/Dockerfile
+          - name: seeder
+            context: .
+            file: seeder/Dockerfile
+          - name: caddy
+            context: .
+            file: caddy/Dockerfile
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      # docker/metadata-action lowercases the image name on its own, but the
+      # existence check below addresses the registry directly.
+      - name: Normalize image name
+        id: image
+        run: |
+          OWNER="${{ github.repository_owner }}"
+          echo "name=ghcr.io/${OWNER,,}/map-server-${{ matrix.name }}" >> "$GITHUB_OUTPUT"
+
+      # The commit and the digests of every FROM image: a new base image (security
+      # fixes) is a reason to rebuild, an unchanged one is not.
+      - name: Build key from commit and base images
+        id: key
+        run: |
+          BASES="$(awk 'toupper($1) == "FROM" { print $2 }' "${{ matrix.file }}" | sort -u)"
+          DIGESTS=""
+          for base in $BASES; do
+            digest="$(docker buildx imagetools inspect --raw "$base" | sha256sum | cut -c1-64)"
+            echo "::notice::$base $digest"
+            DIGESTS="$DIGESTS $digest"
+          done
+          BASE_KEY="$(echo "$DIGESTS" | sha256sum | cut -c1-12)"
+          echo "key=build-${GITHUB_SHA::7}-${BASE_KEY}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check if image already exists (for scheduler)
+        id: image_check
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            IMAGE="${{ steps.image.outputs.name }}:${{ steps.key.outputs.key }}"
+
+            echo "::notice::Checking if image exists: $IMAGE"
+
+            if docker manifest inspect "$IMAGE" > /dev/null; then
+              echo "::notice::Image already exists, skipping scheduled build."
+              echo "skip_build=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "::notice::Image not found or registry error – proceeding with build."
+            fi
+          else
+            echo "::notice::Triggered by ${{ github.event_name }} – forcing rebuild."
+          fi
+
+      - name: Extract metadata
+        if: steps.image_check.outputs.skip_build != 'true'
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ steps.image.outputs.name }}
+          tags: |
+            type=sha
+            type=raw,value=latest
+            type=raw,value=${{ steps.key.outputs.key }}
+
+      - name: Set up Docker Buildx
+        if: steps.image_check.outputs.skip_build != 'true'
+        uses: docker/setup-buildx-action@v4
+
+      # Pull requests build into the cache only and push nothing.
+      - name: Build and push
+        if: steps.image_check.outputs.skip_build != 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          platforms: linux/amd64
+          pull: true
+          push: ${{ github.event_name != 'pull_request' }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}

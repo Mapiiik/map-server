@@ -1,0 +1,9 @@
+# Builds from the repository root (seeder, caddy) take only what their Dockerfiles copy, never the
+# data directory.
+*
+!seeder/bin/
+!mapproxy/mapproxy.yaml
+!caddy/Caddyfile
+!caddy/modes/
+!caddy/log/
+!embed/

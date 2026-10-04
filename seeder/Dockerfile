@@ -1,4 +1,5 @@
 # Keeps the MapProxy cache warm: renders it ahead after every tile update and trims it by age.
+# Built from the repository root, see .dockerignore.
 FROM ghcr.io/mapproxy/mapproxy/mapproxy:7.0.0
 
 ARG SUPERCRONIC_VERSION=0.2.49
@@ -25,7 +26,8 @@ with open('/usr/local/bin/supercronic', 'wb') as f:
 os.chmod('/usr/local/bin/supercronic', 0o755)
 EOF
 
-COPY --chmod=755 bin/ /usr/local/bin/
+COPY --chmod=755 seeder/bin/ /usr/local/bin/
+COPY mapproxy/mapproxy.yaml /mapproxy/config/mapproxy.yaml
 
 USER mapproxy
 ENTRYPOINT ["seeder-entrypoint"]

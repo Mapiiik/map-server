@@ -24,6 +24,11 @@ browser ──> Caddy ──/tiles/───> MapProxy (cache) ──> tileserve
 Scheduling runs inside the containers (supercronic); the host needs no cron and no Docker socket is
 mounted anywhere.
 
+The images are built by GitHub Actions and published to GitHub Container Registry
+(`ghcr.io/mapiiik/map-server-<service>`), with the configuration of this repository baked in. A
+server therefore needs only `compose.yaml`, the file of its mode (`compose.direct.yaml` or
+`compose.behind-proxy.yaml`) and `.env`.
+
 ## Quick start
 
 ```sh
@@ -32,7 +37,7 @@ docker compose up -d
 docker compose logs -f builder
 ```
 
-The first start downloads the extracts and builds the tiles; the tileserver waits for them. For
+The first start pulls the images, downloads the extracts and builds the tiles; the tileserver waits for them. For
 scale: the Czech Republic, Croatia and two neighbouring regions (1.5 GB of extracts) build in about
 four minutes on 24 cores, with the container peaking at 5.5 GB of memory (`PLANETILER_HEAP` is 4 GB
 by default). Fewer cores take proportionally longer. The data directory then holds about 4 GB of
@@ -99,7 +104,31 @@ Republic of Croatia). MapProxy reprojects them into web mercator where needed an
 people look at. Replace them with your own country's, and keep the attribution their licences ask
 for. Do not put services whose terms forbid caching, such as most commercial imagery, behind it.
 
+## Changing the configuration
+
+`mapproxy/mapproxy.yaml`, the Caddy configuration in `caddy/` and the page in `embed/` are part of
+the images. To change them, either build the images from your copy of the repository
+(`docker compose build`, which tags them with the same names), or mount your own files over them in
+`compose.override.yaml`:
+
+```yaml
+services:
+  mapproxy:
+    volumes:
+      - ./mapproxy.yaml:/mapproxy/config/mapproxy.yaml:ro
+  seeder:
+    volumes:
+      - ./mapproxy.yaml:/mapproxy/config/mapproxy.yaml:ro
+  caddy:
+    volumes:
+      - ./embed:/srv/embed:ro
+```
+
 ## Keeping it current
+
+- The images are rebuilt on every change to the repository and whenever a base image they are built
+  from is updated (checked daily). With `WATCHTOWER_ENABLE=true` Watchtower pulls them; otherwise
+  `docker compose pull && docker compose up -d`.
 
 - The builder checks daily (`UPDATE_SCHEDULE`) and rebuilds once the tiles are
   `UPDATE_MAX_AGE_DAYS` old. A failed run is simply tried again the next day. To rebuild now:

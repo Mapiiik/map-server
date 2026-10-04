@@ -1,12 +1,21 @@
 # A self-hosted map server: OpenStreetMap tiles for Leaflet and the like, cached aerial imagery,
 # static map images and an embeddable map page. Choose how it faces the internet with COMPOSE_FILE,
 # see .env.example.
+#
+# The images come ready from GitHub Container Registry, with the configuration of this repository
+# baked in. `docker compose build` builds them from here instead, see README.
+
+x-image: &image
+  pull_policy: missing
+  labels:
+    - "com.centurylinklabs.watchtower.enable=${WATCHTOWER_ENABLE:-false}"
 
 services:
   # Creates the data directories and gives them to the uid the services write them as.
   prepare:
+    <<: *image
     build: ./builder
-    image: map-server-builder:local
+    image: ghcr.io/mapiiik/map-server-builder:latest
     user: root
     command: ["prepare-data"]
     volumes:
@@ -15,8 +24,9 @@ services:
 
   # Downloads the OpenStreetMap extracts and builds the vector tiles, now and then.
   builder:
+    <<: *image
     build: ./builder
-    image: map-server-builder:local
+    image: ghcr.io/mapiiik/map-server-builder:latest
     depends_on:
       prepare:
         condition: service_completed_successfully
@@ -33,8 +43,9 @@ services:
 
   # Renders the vector tiles into raster tiles and static map images.
   tileserver:
+    <<: *image
     build: ./tileserver
-    image: map-server-tileserver:local
+    image: ghcr.io/mapiiik/map-server-tileserver:latest
     depends_on:
       prepare:
         condition: service_completed_successfully
@@ -44,7 +55,9 @@ services:
 
   # Caches the rendered tiles and the aerial imagery.
   mapproxy:
-    image: ghcr.io/mapproxy/mapproxy/mapproxy:7.0.0-nginx
+    <<: *image
+    build: ./mapproxy
+    image: ghcr.io/mapiiik/map-server-mapproxy:latest
     depends_on:
       prepare:
         condition: service_completed_successfully
@@ -52,14 +65,16 @@ services:
       UWSGI_PROCESSES: ${MAPPROXY_PROCESSES:-4}
       UWSGI_THREADS: ${MAPPROXY_THREADS:-8}
     volumes:
-      - ./mapproxy/mapproxy.yaml:/mapproxy/config/mapproxy.yaml:ro
       - ${DATA_DIR:-./data}/mapproxy-cache:/mapproxy/cache_data
     restart: unless-stopped
 
   # Renders the cache ahead after every tile update and trims it by age.
   seeder:
-    build: ./seeder
-    image: map-server-seeder:local
+    <<: *image
+    build:
+      context: .
+      dockerfile: seeder/Dockerfile
+    image: ghcr.io/mapiiik/map-server-seeder:latest
     depends_on:
       prepare:
         condition: service_completed_successfully
@@ -73,7 +88,6 @@ services:
       CACHE_MAX_AGE_DAYS: ${CACHE_MAX_AGE_DAYS:-90}
       TZ: ${TZ:-UTC}
     volumes:
-      - ./mapproxy/mapproxy.yaml:/mapproxy/config/mapproxy.yaml:ro
       - ${DATA_DIR:-./data}/mapproxy-cache:/mapproxy/cache_data
       - ${DATA_DIR:-./data}/tiles:/data/tiles:ro
       - ${DATA_DIR:-./data}/config:/data/config:ro
@@ -81,7 +95,11 @@ services:
 
   # TLS, certificates and the public paths.
   caddy:
-    image: caddy:2.11-alpine
+    <<: *image
+    build:
+      context: .
+      dockerfile: caddy/Dockerfile
+    image: ghcr.io/mapiiik/map-server-caddy:latest
     depends_on:
       - mapproxy
       - tileserver
@@ -92,8 +110,6 @@ services:
       TILE_MAX_AGE: ${TILE_MAX_AGE:-86400}
       ACCESS_LOG: ${ACCESS_LOG:-off}
     volumes:
-      - ./caddy:/etc/caddy:ro
-      - ./embed:/srv/embed:ro
       - caddy_data:/data
       - caddy_config:/config
     restart: unless-stopped
