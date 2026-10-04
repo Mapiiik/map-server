@@ -1,18 +1,8 @@
-# Behind a proxy that routes TLS by SNI without terminating it and prepends the PROXY protocol
-# header, such as HAProxy with `send-proxy-v2`. The proxy owns port 80, so the certificate is
-# obtained with the TLS-ALPN challenge, which travels inside the TLS connection it passes on.
+# Behind a proxy that routes TLS by SNI without terminating it, such as HAProxy. The proxy owns
+# port 80 and redirects it to HTTPS, so the certificate is obtained with the TLS-ALPN challenge,
+# which travels inside the TLS connection it passes on.
 
 auto_https disable_redirects
-
-servers {
-	listener_wrappers {
-		proxy_protocol {
-			timeout 5s
-			allow {$PROXY_ALLOW:10.0.0.0/8 172.16.0.0/12 192.168.0.0/16}
-		}
-		tls
-	}
-}
 
 cert_issuer acme {
 	disable_http_challenge

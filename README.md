@@ -60,7 +60,8 @@ PROXY_ALLOW=172.18.0.0/16          # where the PROXY protocol header is trusted 
 
 The proxy should send the PROXY protocol (v1 or v2) and must redirect plain HTTP to HTTPS itself.
 Caddy takes the client's address from the PROXY header when it comes from `PROXY_ALLOW`, and
-serves a connection without one under the connecting address. It obtains its certificate with the
+serves a connection without one under the connecting address. From anywhere else the header is ignored, and without a proxy only this machine is
+trusted, so nobody can claim another address. It obtains its certificate with the
 TLS-ALPN challenge, which passes through SNI routing. See [examples/haproxy.cfg](examples/haproxy.cfg).
 
 ## Using the maps

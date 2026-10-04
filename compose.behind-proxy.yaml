@@ -4,6 +4,7 @@ services:
   caddy:
     environment:
       LISTENER_MODE: behind-proxy
+      PROXY_ALLOW: ${PROXY_ALLOW:?set PROXY_ALLOW to the network the proxy connects from}
     networks:
       default:
       ingress:

@@ -1,8 +1,22 @@
 # The only way in: the cached tiles, the static map images and the embeddable map page.
 #
-# LISTENER_MODE picks how Caddy faces the world, see modes/. ACCESS_LOG=on logs every request.
+# The PROXY protocol is always on, LISTENER_MODE picks how Caddy faces the world, see modes/.
+# ACCESS_LOG=on logs every request.
 {
 	import modes/{$LISTENER_MODE:direct}/global.caddy
+
+	# The PROXY protocol header is used when it comes from PROXY_ALLOW (by default this machine only)
+	# and is optional there, from anywhere else it is ignored. So it stays on, with or without a proxy
+	# in front, and nobody else can claim an address.
+	servers {
+		listener_wrappers {
+			proxy_protocol {
+				timeout 5s
+				allow {$PROXY_ALLOW:127.0.0.1/32 ::1/128}
+			}
+			tls
+		}
+	}
 }
 
 {$SERVER_NAME:localhost} {

@@ -105,7 +105,7 @@ services:
       - tileserver
     environment:
       SERVER_NAME: ${SERVER_NAME:?set SERVER_NAME in .env}
-      PROXY_ALLOW: ${PROXY_ALLOW:-10.0.0.0/8 172.16.0.0/12 192.168.0.0/16}
+      PROXY_ALLOW: ${PROXY_ALLOW:-127.0.0.1/32 ::1/128}
       EMBED_FRAME_ANCESTORS: ${EMBED_FRAME_ANCESTORS:-*}
       TILE_MAX_AGE: ${TILE_MAX_AGE:-86400}
       ACCESS_LOG: ${ACCESS_LOG:-off}
