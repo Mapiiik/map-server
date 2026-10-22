@@ -64,6 +64,13 @@ serves a connection without one under the connecting address. From anywhere else
 trusted, so nobody can claim another address. It obtains its certificate with the
 TLS-ALPN challenge, which passes through SNI routing. See [examples/haproxy.cfg](examples/haproxy.cfg).
 
+Only on an internal network (`compose.internal.yaml`), nothing has to be open from the internet: Caddy
+issues the certificate from its own CA, valid for about ten years. `SERVER_NAME` can be the server's IP
+address, then no DNS record is needed. Browsers warn until they trust its root certificate,
+`/data/caddy/pki/authorities/local/root.crt` in the `caddy` container (volume `caddy_data`).
+Import it on the computers that use the service, on Windows with `certutil -addstore -user Root
+root.crt`. If the CA is lost, Caddy makes a new one and it has to be imported again.
+
 ## Using the maps
 
 **XYZ tiles**, e.g. in Leaflet:
